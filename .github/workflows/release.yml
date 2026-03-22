@@ -1,0 +1,78 @@
+name: Release
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+      - dev
+
+jobs:
+  release:
+    name: Release
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: Build shadowJar
+        env:
+          GITHUB_ACTOR: ${{ github.repository_owner }}
+          GITHUB_TOKEN: ${{ secrets.EXTEN_TOKEN }}
+        run: ./gradlew clean shadowJar
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 'lts/*'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Import GPG key (optional)
+        if: env.GPG_PRIVATE_KEY != ''
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+          GPG_FINGERPRINT: ${{ vars.GPG_FINGERPRINT }}
+        uses: crazy-max/ghaction-import-gpg@v6
+        with:
+          gpg_private_key: ${{ env.GPG_PRIVATE_KEY }}
+          passphrase: ${{ env.GPG_PASSPHRASE }}
+          fingerprint: ${{ env.GPG_FINGERPRINT }}
+
+      - name: Release
+        uses: cycjimmy/semantic-release-action@v4
+        id: release
+        env:
+          GITHUB_TOKEN: ${{ secrets.EXTEN_TOKEN }}
+
+      - name: Attest build provenance
+        if: steps.release.outputs.new_release_published == 'true'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: 'ExtenRe CLI ${{ steps.release.outputs.new_release_git_tag }}'
+          subject-path: build/libs/extenre-cli*.jar
